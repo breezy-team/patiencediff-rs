@@ -1,3 +1,21 @@
+// Copyright (C) 2005 Bram Cohen
+// Copyright (C) 2005, 2006 Canonical Ltd
+// Copyright (C) 2023 Jelmer Vernooĳ
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+
 use std::collections::HashMap;
 use std::hash::Hash;
 
@@ -188,4 +206,54 @@ pub fn recurse_matches<T: PartialEq + Clone + Hash + Eq>(
             answer.push((nahi + i, nbhi + i));
         }
     }
+}
+
+/// Find sequences of lines.
+///
+/// Given a sequence of [(line_in_a, line_in_b),]
+/// find regions where they both increment at the same time
+fn _collapse_sequences(matches: &[(usize, usize)]) -> Vec<(usize, usize, usize)> {
+    let mut answer = Vec::new();
+    let mut start_a = None;
+    let mut start_b = None;
+    let mut length = 0;
+
+    for &(i_a, i_b) in matches.iter() {
+        if let Some(s_a) = start_a {
+            if i_a == s_a + length && i_b == start_b.unwrap() + length {
+                length += 1;
+                continue;
+            } else {
+                answer.push((s_a, start_b.unwrap(), length));
+            }
+        }
+        start_a = Some(i_a);
+        start_b = Some(i_b);
+        length = 1;
+    }
+
+    if length != 0 {
+        answer.push((start_a.unwrap(), start_b.unwrap(), length));
+    }
+
+    answer
+}
+
+fn _check_consistency(answer: &[(usize, usize, usize)]) -> Result<(), String> {
+    // For consistency sake, make sure all matches are only increasing
+    let mut next_a = 0;
+    let mut next_b = 0;
+
+    for &(a, b, match_len) in answer.iter() {
+        if a < next_a {
+            return Err("Non increasing matches for a".to_owned());
+        }
+        if b < next_b {
+            return Err("Non increasing matches for b".to_owned());
+        }
+        next_a = a + match_len;
+        next_b = b + match_len;
+    }
+
+    Ok(())
 }

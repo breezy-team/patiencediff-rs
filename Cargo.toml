@@ -3,6 +3,8 @@ name = "patiencediff"
 version = "3.3.3"
 edition = "2018"
 description = "Implementation of the patiencediff algorithm"
+authors = ["Jelmer Vernooĳ <jelmer@jelmer.uk>"]
+homepage = "https://github.com/breezy-team/patiencediff-rs"
 license = "GPLv2+"
 
 [lib]
