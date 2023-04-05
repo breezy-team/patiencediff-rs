@@ -1,0 +1,8 @@
+[package]
+name = "patiencediff"
+version = "3.3.3"
+edition = "2018"
+description = "Implementation of the patiencediff algorithm"
+license = "GPLv2+"
+
+[lib]
