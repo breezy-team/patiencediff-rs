@@ -1,8 +1,7 @@
-use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
-use std::convert::TryInto;
+use std::collections::HashMap;
+use std::hash::Hash;
 
-fn unique_lcs<A: Eq + std::hash::Hash + Clone>(
+pub fn unique_lcs<A: Eq + Hash + Clone>(
     a: &[A],
     b: &[A],
 ) -> Vec<(usize, usize)> {
@@ -85,3 +84,108 @@ fn unique_lcs<A: Eq + std::hash::Hash + Clone>(
     result
 }
 
+/// Find all of the matching text in the lines of a and b.
+///
+/// Args:
+///   a: A sequence
+///   b: Another sequence
+///   alo: The start location of a to check, typically 0
+///   ahi: The start location of b to check, typically 0
+///   ahi: The maximum length of a to check, typically len(a)
+///   bhi: The maximum length of b to check, typically len(b)
+///   answer: The return array. Will be filled with tuples indicating [(line_in_a, line_in_b)]
+///   maxrecursion: The maximum depth to recurse.  Must be a positive integer.
+/// Returns: None, the return value is in the parameter answer, which should be a list
+pub fn recurse_matches<T: PartialEq + Clone + Hash + Eq>(
+    a: &[T],
+    b: &[T],
+    alo: usize,
+    blo: usize,
+    ahi: usize,
+    bhi: usize,
+    answer: &mut Vec<(usize, usize)>,
+    maxrecursion: i32,
+) {
+    if maxrecursion < 0 {
+        panic!("Max recursion depth reached");
+    }
+    let old_length = answer.len();
+    if alo == ahi || blo == bhi {
+        return;
+    }
+    let mut last_a_pos = alo - 1;
+    let mut last_b_pos = blo - 1;
+    for (apos, bpos) in unique_lcs(&a[alo..ahi], &b[blo..bhi]) {
+        let apos = apos + alo;
+        let bpos = bpos + blo;
+        // Most of the time, you will have a sequence of similar entries
+        if last_a_pos + 1 != apos || last_b_pos + 1 != bpos {
+            recurse_matches(
+                a,
+                b,
+                last_a_pos + 1,
+                last_b_pos + 1,
+                apos,
+                bpos,
+                answer,
+                maxrecursion - 1,
+            );
+        }
+        last_a_pos = apos;
+        last_b_pos = bpos;
+        answer.push((apos, bpos));
+    }
+    if answer.len() > old_length {
+        // find matches between the last match and the end
+        recurse_matches(
+            a,
+            b,
+            last_a_pos + 1,
+            last_b_pos + 1,
+            ahi,
+            bhi,
+            answer,
+            maxrecursion - 1,
+        );
+    } else if a[alo] == b[blo] {
+        // find matching lines at the very beginning
+        let mut nalo = alo;
+        let mut nblo = blo;
+        while nalo < ahi && nblo < bhi && a[nalo] == b[nblo] {
+            answer.push((nalo, nblo));
+            nalo += 1;
+            nblo += 1;
+        }
+        recurse_matches(
+            a,
+            b,
+            nalo,
+            nblo,
+            ahi,
+            bhi,
+            answer,
+            maxrecursion - 1,
+        );
+    } else if a[ahi - 1] == b[bhi - 1] {
+        // find matching lines at the very end
+        let mut nahi = ahi - 1;
+        let mut nbhi = bhi - 1;
+        while nahi > alo && nbhi > blo && a[nahi - 1] == b[nbhi - 1] {
+            nahi -= 1;
+            nbhi -= 1;
+        }
+        recurse_matches(
+            a,
+            b,
+            last_a_pos + 1,
+            last_b_pos + 1,
+            nahi,
+            nbhi,
+            answer,
+            maxrecursion - 1,
+        );
+        for i in 0..(ahi - nahi) {
+            answer.push((nahi + i, nbhi + i));
+        }
+    }
+}
