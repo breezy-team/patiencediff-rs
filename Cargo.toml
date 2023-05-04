@@ -5,6 +5,7 @@ edition = "2018"
 description = "Implementation of the patiencediff algorithm"
 authors = ["Jelmer Vernooĳ <jelmer@jelmer.uk>"]
 homepage = "https://github.com/breezy-team/patiencediff-rs"
-license = "GPLv2+"
+license = "GPL-2.0+"
+repository = "https://github.com/breezy-team/patiencediff-rs"
 
 [lib]
