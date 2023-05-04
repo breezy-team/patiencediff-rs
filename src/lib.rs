@@ -19,10 +19,7 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
-pub fn unique_lcs<A: Eq + Hash + Clone>(
-    a: &[A],
-    b: &[A],
-) -> Vec<(usize, usize)> {
+pub fn unique_lcs<A: Eq + Hash + Clone>(a: &[A], b: &[A]) -> Vec<(usize, usize)> {
     // Create a mapping of line -> position in a, filtering out duplicate lines
     let mut index: HashMap<&A, Option<usize>> = HashMap::new();
     for (i, line) in a.iter().enumerate() {
@@ -38,18 +35,15 @@ pub fn unique_lcs<A: Eq + Hash + Clone>(
     let mut btoa: Vec<Option<usize>> = vec![None; b.len()];
     let mut index2: HashMap<&A, usize> = HashMap::new();
     for (pos, line) in b.iter().enumerate() {
-        match index.get(line) {
-            Some(Some(next)) => {
-                if index2.contains_key(line) {
-                    // Unset the previous mapping, which we now know to be invalid because the line isn't unique
-                    btoa[index2[line]] = None;
-                    index.remove(line);
-                } else {
-                    index2.insert(line, pos);
-                    btoa[pos] = Some(*next);
-                }
+        if let Some(Some(next)) = index.get(line) {
+            if index2.contains_key(line) {
+                // Unset the previous mapping, which we now know to be invalid because the line isn't unique
+                btoa[index2[line]] = None;
+                index.remove(line);
+            } else {
+                index2.insert(line, pos);
+                btoa[pos] = Some(*next);
             }
-            _ => {}
         }
     }
 
@@ -68,15 +62,16 @@ pub fn unique_lcs<A: Eq + Hash + Clone>(
                 k = stacks.len();
             // As an optimization, check if the next line comes right after
             // the previous line, because usually it does
-            } else if !stacks.is_empty() && stacks[k] < *apos &&
-                        (k == stacks.len() - 1 ||
-                         stacks[k+1] > *apos) {
+            } else if !stacks.is_empty()
+                && stacks[k] < *apos
+                && (k == stacks.len() - 1 || stacks[k + 1] > *apos)
+            {
                 k += 1;
             } else {
                 k = stacks.binary_search(apos).unwrap_or_else(|x| x);
             }
             if k > 0 {
-                backpointers[bpos] = Some(lasts[k-1]);
+                backpointers[bpos] = Some(lasts[k - 1]);
             }
             if k < stacks.len() {
                 stacks[k] = *apos;
@@ -93,7 +88,7 @@ pub fn unique_lcs<A: Eq + Hash + Clone>(
     }
 
     let mut result = Vec::new();
-    let mut m_opt = Some(lasts.last().unwrap().clone());
+    let mut m_opt = Some(*lasts.last().unwrap());
     while let Some(m) = m_opt {
         result.push((btoa[m].unwrap(), m));
         m_opt = backpointers[m];
@@ -174,16 +169,7 @@ pub fn recurse_matches<T: PartialEq + Clone + Hash + Eq>(
             nalo += 1;
             nblo += 1;
         }
-        recurse_matches(
-            a,
-            b,
-            nalo,
-            nblo,
-            ahi,
-            bhi,
-            answer,
-            maxrecursion - 1,
-        );
+        recurse_matches(a, b, nalo, nblo, ahi, bhi, answer, maxrecursion - 1);
     } else if a[ahi - 1] == b[bhi - 1] {
         // find matching lines at the very end
         let mut nahi = ahi - 1;
@@ -212,7 +198,7 @@ pub fn recurse_matches<T: PartialEq + Clone + Hash + Eq>(
 ///
 /// Given a sequence of [(line_in_a, line_in_b),]
 /// find regions where they both increment at the same time
-fn _collapse_sequences(matches: &[(usize, usize)]) -> Vec<(usize, usize, usize)> {
+fn collapse_sequences(matches: &[(usize, usize)]) -> Vec<(usize, usize, usize)> {
     let mut answer = Vec::new();
     let mut start_a = None;
     let mut start_b = None;
@@ -239,7 +225,7 @@ fn _collapse_sequences(matches: &[(usize, usize)]) -> Vec<(usize, usize, usize)>
     answer
 }
 
-fn _check_consistency(answer: &[(usize, usize, usize)]) -> Result<(), String> {
+fn check_consistency(answer: &[(usize, usize, usize)]) -> Result<(), String> {
     // For consistency sake, make sure all matches are only increasing
     let mut next_a = 0;
     let mut next_b = 0;
