@@ -198,7 +198,7 @@ pub fn recurse_matches<T: PartialEq + Clone + Hash + Eq>(
 ///
 /// Given a sequence of [(line_in_a, line_in_b),]
 /// find regions where they both increment at the same time
-fn collapse_sequences(matches: &[(usize, usize)]) -> Vec<(usize, usize, usize)> {
+pub fn collapse_sequences(matches: &[(usize, usize)]) -> Vec<(usize, usize, usize)> {
     let mut answer = Vec::new();
     let mut start_a = None;
     let mut start_b = None;
@@ -225,7 +225,7 @@ fn collapse_sequences(matches: &[(usize, usize)]) -> Vec<(usize, usize, usize)> 
     answer
 }
 
-fn check_consistency(answer: &[(usize, usize, usize)]) -> Result<(), String> {
+pub fn check_consistency(answer: &[(usize, usize, usize)]) -> Result<(), String> {
     // For consistency sake, make sure all matches are only increasing
     let mut next_a = 0;
     let mut next_b = 0;
