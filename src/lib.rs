@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
-pub fn unique_lcs<A: Eq + Hash + Clone>(a: &[A], b: &[A]) -> Vec<(usize, usize)> {
+pub fn unique_lcs<A: Eq + Hash>(a: &[A], b: &[A]) -> Vec<(usize, usize)> {
     // Create a mapping of line -> position in a, filtering out duplicate lines
     let mut index: HashMap<&A, Option<usize>> = HashMap::new();
     for (i, line) in a.iter().enumerate() {
@@ -97,6 +97,23 @@ pub fn unique_lcs<A: Eq + Hash + Clone>(a: &[A], b: &[A]) -> Vec<(usize, usize)>
     result
 }
 
+#[test]
+fn test_unique_lcs() {
+    assert_eq!(unique_lcs(b"", b""), vec![]);
+    assert_eq!(unique_lcs(b"", b"a"), []);
+    assert_eq!(unique_lcs(b"a", b""), []);
+    assert_eq!(unique_lcs(b"a", b"a"), [(0, 0)]);
+    assert_eq!(unique_lcs(b"a", b"b"), []);
+    assert_eq!(unique_lcs(b"ab", b"ab"), [(0, 0), (1, 1)]);
+    assert_eq!(
+        unique_lcs(b"abcde", b"cdeab"), [(2, 0), (3, 1), (4, 2)]);
+    assert_eq!(
+        unique_lcs(b"cdeab", b"abcde"), [(0, 2), (1, 3), (2, 4)]);
+    assert_eq!(
+        unique_lcs(b"abXde", b"abYde"), [(0, 0), (1, 1), (3, 3), (4, 4)]);
+    assert_eq!(unique_lcs(b"acbac", b"abc"), [(2, 1)]);
+}
+
 /// Find all of the matching text in the lines of a and b.
 ///
 /// Args:
@@ -109,7 +126,7 @@ pub fn unique_lcs<A: Eq + Hash + Clone>(a: &[A], b: &[A]) -> Vec<(usize, usize)>
 ///   answer: The return array. Will be filled with tuples indicating [(line_in_a, line_in_b)]
 ///   maxrecursion: The maximum depth to recurse.  Must be a positive integer.
 /// Returns: None, the return value is in the parameter answer, which should be a list
-pub fn recurse_matches<T: PartialEq + Clone + Hash + Eq>(
+pub fn recurse_matches<T: PartialEq + Hash + Eq>(
     a: &[T],
     b: &[T],
     alo: usize,
@@ -126,26 +143,26 @@ pub fn recurse_matches<T: PartialEq + Clone + Hash + Eq>(
     if alo == ahi || blo == bhi {
         return;
     }
-    let mut last_a_pos = alo - 1;
-    let mut last_b_pos = blo - 1;
+    let mut last_a_pos: isize = alo as isize - 1;
+    let mut last_b_pos: isize = blo as isize - 1;
     for (apos, bpos) in unique_lcs(&a[alo..ahi], &b[blo..bhi]) {
         let apos = apos + alo;
         let bpos = bpos + blo;
         // Most of the time, you will have a sequence of similar entries
-        if last_a_pos + 1 != apos || last_b_pos + 1 != bpos {
+        if (last_a_pos + 1) as usize != apos || (last_b_pos + 1) as usize != bpos {
             recurse_matches(
                 a,
                 b,
-                last_a_pos + 1,
-                last_b_pos + 1,
+                (last_a_pos + 1) as usize,
+                (last_b_pos + 1) as usize,
                 apos,
                 bpos,
                 answer,
                 maxrecursion - 1,
             );
         }
-        last_a_pos = apos;
-        last_b_pos = bpos;
+        last_a_pos = apos as isize;
+        last_b_pos = bpos as isize;
         answer.push((apos, bpos));
     }
     if answer.len() > old_length {
@@ -153,8 +170,8 @@ pub fn recurse_matches<T: PartialEq + Clone + Hash + Eq>(
         recurse_matches(
             a,
             b,
-            last_a_pos + 1,
-            last_b_pos + 1,
+            (last_a_pos + 1) as usize,
+            (last_b_pos + 1) as usize,
             ahi,
             bhi,
             answer,
@@ -181,8 +198,8 @@ pub fn recurse_matches<T: PartialEq + Clone + Hash + Eq>(
         recurse_matches(
             a,
             b,
-            last_a_pos + 1,
-            last_b_pos + 1,
+            (last_a_pos + 1) as usize,
+            (last_b_pos + 1) as usize,
             nahi,
             nbhi,
             answer,
@@ -192,6 +209,33 @@ pub fn recurse_matches<T: PartialEq + Clone + Hash + Eq>(
             answer.push((nahi + i, nbhi + i));
         }
     }
+}
+
+#[test]
+fn test_recurse_matches() {
+        fn test_one<A: Hash + Eq + PartialEq>(a: &[A], b: &[A], matches: &[(usize, usize)]) {
+            let mut test_matches = vec![];
+            recurse_matches(a, b, 0, 0, a.len(), b.len(), &mut test_matches, 10);
+            assert_eq!(test_matches, matches);
+        }
+
+        test_one(&["a", "", "b", "", "c"], &["a", "a", "b", "c", "c"], &[(0, 0), (2, 2), (4, 4)]);
+        test_one(&["a", "c", "b", "a", "c"], &["a", "b", "c"], &[(0, 0), (2, 1), (4, 2)]);
+
+        // Even though "bc" is not unique globally, and is surrounded by
+        // non-matching lines, we should still match, because they are locally
+        // unique
+        test_one(b"abcdbce", b"afbcgdbce", &[(0, 0), (1, 2), (2, 3), (3, 5), (4, 6), (5, 7), (6, 8)]);
+
+        // recurse_matches doesn"t match non-unique
+        // lines surrounded by bogus text.
+        // The update has been done in patiencediff.SequenceMatcher instead
+
+        // This is what it could be
+        // test_one("aBccDe", "abccde", [(0,0), (2,2), (3,3), (5,5)])
+
+        // This is what it currently gives:
+        test_one(b"aBccDe", b"abccde", &[(0, 0), (5, 5)]);
 }
 
 /// Find sequences of lines.
