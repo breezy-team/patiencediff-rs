@@ -105,12 +105,12 @@ fn test_unique_lcs() {
     assert_eq!(unique_lcs(b"a", b"a"), [(0, 0)]);
     assert_eq!(unique_lcs(b"a", b"b"), []);
     assert_eq!(unique_lcs(b"ab", b"ab"), [(0, 0), (1, 1)]);
+    assert_eq!(unique_lcs(b"abcde", b"cdeab"), [(2, 0), (3, 1), (4, 2)]);
+    assert_eq!(unique_lcs(b"cdeab", b"abcde"), [(0, 2), (1, 3), (2, 4)]);
     assert_eq!(
-        unique_lcs(b"abcde", b"cdeab"), [(2, 0), (3, 1), (4, 2)]);
-    assert_eq!(
-        unique_lcs(b"cdeab", b"abcde"), [(0, 2), (1, 3), (2, 4)]);
-    assert_eq!(
-        unique_lcs(b"abXde", b"abYde"), [(0, 0), (1, 1), (3, 3), (4, 4)]);
+        unique_lcs(b"abXde", b"abYde"),
+        [(0, 0), (1, 1), (3, 3), (4, 4)]
+    );
     assert_eq!(unique_lcs(b"acbac", b"abc"), [(2, 1)]);
 }
 
@@ -213,29 +213,41 @@ pub fn recurse_matches<T: PartialEq + Hash + Eq>(
 
 #[test]
 fn test_recurse_matches() {
-        fn test_one<A: Hash + Eq + PartialEq>(a: &[A], b: &[A], matches: &[(usize, usize)]) {
-            let mut test_matches = vec![];
-            recurse_matches(a, b, 0, 0, a.len(), b.len(), &mut test_matches, 10);
-            assert_eq!(test_matches, matches);
-        }
+    fn test_one<A: Hash + Eq + PartialEq>(a: &[A], b: &[A], matches: &[(usize, usize)]) {
+        let mut test_matches = vec![];
+        recurse_matches(a, b, 0, 0, a.len(), b.len(), &mut test_matches, 10);
+        assert_eq!(test_matches, matches);
+    }
 
-        test_one(&["a", "", "b", "", "c"], &["a", "a", "b", "c", "c"], &[(0, 0), (2, 2), (4, 4)]);
-        test_one(&["a", "c", "b", "a", "c"], &["a", "b", "c"], &[(0, 0), (2, 1), (4, 2)]);
+    test_one(
+        &["a", "", "b", "", "c"],
+        &["a", "a", "b", "c", "c"],
+        &[(0, 0), (2, 2), (4, 4)],
+    );
+    test_one(
+        &["a", "c", "b", "a", "c"],
+        &["a", "b", "c"],
+        &[(0, 0), (2, 1), (4, 2)],
+    );
 
-        // Even though "bc" is not unique globally, and is surrounded by
-        // non-matching lines, we should still match, because they are locally
-        // unique
-        test_one(b"abcdbce", b"afbcgdbce", &[(0, 0), (1, 2), (2, 3), (3, 5), (4, 6), (5, 7), (6, 8)]);
+    // Even though "bc" is not unique globally, and is surrounded by
+    // non-matching lines, we should still match, because they are locally
+    // unique
+    test_one(
+        b"abcdbce",
+        b"afbcgdbce",
+        &[(0, 0), (1, 2), (2, 3), (3, 5), (4, 6), (5, 7), (6, 8)],
+    );
 
-        // recurse_matches doesn"t match non-unique
-        // lines surrounded by bogus text.
-        // The update has been done in patiencediff.SequenceMatcher instead
+    // recurse_matches doesn"t match non-unique
+    // lines surrounded by bogus text.
+    // The update has been done in patiencediff.SequenceMatcher instead
 
-        // This is what it could be
-        // test_one("aBccDe", "abccde", [(0,0), (2,2), (3,3), (5,5)])
+    // This is what it could be
+    // test_one("aBccDe", "abccde", [(0,0), (2,2), (3,3), (5,5)])
 
-        // This is what it currently gives:
-        test_one(b"aBccDe", b"abccde", &[(0, 0), (5, 5)]);
+    // This is what it currently gives:
+    test_one(b"aBccDe", b"abccde", &[(0, 0), (5, 5)]);
 }
 
 /// Find sequences of lines.
@@ -269,21 +281,76 @@ pub fn collapse_sequences(matches: &[(usize, usize)]) -> Vec<(usize, usize, usiz
     answer
 }
 
-pub fn check_consistency(answer: &[(usize, usize, usize)]) -> Result<(), String> {
+fn check_consistency(answer: &[(usize, usize, usize)]) {
     // For consistency sake, make sure all matches are only increasing
     let mut next_a = 0;
     let mut next_b = 0;
-
-    for &(a, b, match_len) in answer.iter() {
-        if a < next_a {
-            return Err("Non increasing matches for a".to_owned());
-        }
-        if b < next_b {
-            return Err("Non increasing matches for b".to_owned());
-        }
+    for (a, b, match_len) in answer {
+        assert!(a >= &next_a, "Non increasing matches for a");
+        assert!(b >= &next_b, "Non increasing matches for b");
         next_a = a + match_len;
         next_b = b + match_len;
     }
+}
 
-    Ok(())
+pub struct SequenceMatcher<'a, T: PartialEq + Hash + Eq> {
+    a: &'a [T],
+    b: &'a [T],
+    matching_blocks: Option<Vec<(usize, usize, usize)>>,
+}
+
+impl<'a, T: PartialEq + Hash + Eq> SequenceMatcher<'a, T> {
+    pub fn new(a: &'a [T], b: &'a [T]) -> SequenceMatcher<'a, T> {
+        SequenceMatcher {
+            a,
+            b,
+            matching_blocks: None,
+        }
+    }
+
+    /// Return list of triples describing matching subsequences.
+    ///
+    /// Each triple is of the form (i, j, n), and means that
+    /// a[i:i+n] == b[j:j+n].  The triples are monotonically increasing in
+    /// i and in j.
+    ///
+    /// The last triple is a dummy, (len(a), len(b), 0), and is the only
+    /// triple with n==0.
+    ///
+    pub fn get_matching_blocks(&mut self) -> &[(usize, usize, usize)] {
+        if let Some(ref matching_blocks) = self.matching_blocks {
+            return matching_blocks;
+        }
+
+        let mut matches = vec![];
+        recurse_matches(
+            self.a,
+            self.b,
+            0,
+            0,
+            self.a.len(),
+            self.b.len(),
+            &mut matches,
+            10,
+        );
+        // Matches now has individual line pairs of
+        // line A matches line B, at the given offsets
+        let mut matching_blocks = collapse_sequences(&matches);
+        matching_blocks.push((self.a.len(), self.b.len(), 0));
+        if cfg!(debug_assertions) {
+            check_consistency(&matching_blocks);
+        }
+
+        self.matching_blocks = Some(matching_blocks);
+        self.matching_blocks.as_ref().unwrap()
+    }
+}
+
+#[test]
+fn test_sequence_matcher() {
+    let mut s = SequenceMatcher::new(b"abxcd", b"abcd");
+    assert_eq!(
+        s.get_matching_blocks(),
+        vec![(0, 0, 2), (3, 2, 2), (5, 4, 0)]
+    );
 }
