@@ -354,3 +354,419 @@ fn test_sequence_matcher() {
         vec![(0, 0, 2), (3, 2, 2), (5, 4, 0)]
     );
 }
+
+#[cfg(test)]
+mod sequence_matcher_tests {
+    use super::*;
+
+    #[test]
+    fn test_diff_unicode_string() {
+        let a = (4000..4500)
+            .step_by(3)
+            .map(|x| std::char::from_u32(x).unwrap())
+            .collect::<String>();
+        let b = (4300..4800)
+            .step_by(2)
+            .map(|x| std::char::from_u32(x).unwrap())
+            .collect::<String>();
+        let a_chars = a.chars().collect::<Vec<char>>();
+        let b_chars = b.chars().collect::<Vec<char>>();
+        let mut sm = SequenceMatcher::new(&a_chars, &b_chars);
+        let mb = sm.get_matching_blocks();
+        assert_eq!(35, mb.len())
+    }
+
+    /// Check that the sequence matcher returns the correct blocks.
+    ///
+    /// # Arguments
+    /// * `a` - A sequence to match
+    /// * `b` - Another sequence to match
+    /// * `expected_blocks` - The expected output, not including the final matching block (a.len(), b.len(), 0)
+    fn assert_diff_blocks<T: Eq + std::hash::Hash>(
+        a: &[T],
+        b: &[T],
+        expected_blocks: &[(usize, usize, usize)],
+    ) {
+        let mut matcher = SequenceMatcher::new(a, b);
+        let blocks = matcher.get_matching_blocks();
+        let last = blocks.last().unwrap();
+        assert_eq!(&(a.len(), b.len(), 0), last);
+        assert_eq!(expected_blocks, &blocks[0..blocks.len() - 1]);
+    }
+
+    #[test]
+    fn test_matching_blocks() {
+        // Some basic matching tests
+        assert_diff_blocks("".as_bytes(), "".as_bytes(), &[]);
+        assert_diff_blocks::<i32>(&[], &[], &[]);
+        assert_diff_blocks("abc".as_bytes(), "".as_bytes(), &[]);
+        assert_diff_blocks("".as_bytes(), "abc".as_bytes(), &[]);
+        assert_diff_blocks("abcd".as_bytes(), "abcd".as_bytes(), &[(0, 0, 4)]);
+        assert_diff_blocks("abcd".as_bytes(), "abce".as_bytes(), &[(0, 0, 3)]);
+        assert_diff_blocks("eabc".as_bytes(), "abce".as_bytes(), &[(1, 0, 3)]);
+        assert_diff_blocks("eabce".as_bytes(), "abce".as_bytes(), &[(1, 0, 4)]);
+        assert_diff_blocks(
+            "abcde".as_bytes(),
+            "abXde".as_bytes(),
+            &[(0, 0, 2), (3, 3, 2)],
+        );
+        assert_diff_blocks(
+            "abcde".as_bytes(),
+            "abXYZde".as_bytes(),
+            &[(0, 0, 2), (3, 5, 2)],
+        );
+        assert_diff_blocks(
+            "abde".as_bytes(),
+            "abXYZde".as_bytes(),
+            &[(0, 0, 2), (2, 5, 2)],
+        );
+        // This may check too much, but it checks to see that
+        // a copied block stays attached to the previous section,
+        // not the later one.
+        // difflib would tend to grab the trailing longest match
+        // which would make the diff not look right
+        assert_diff_blocks(
+            "abcdefghijklmnop".as_bytes(),
+            "abcdefxydefghijklmnop".as_bytes(),
+            &[(0, 0, 6), (6, 11, 10)],
+        );
+
+        // make sure it supports passing in lists
+        assert_diff_blocks(
+            &["hello there\n", "world\n", "how are you today?\n"],
+            &["hello there\n", "how are you today?\n"],
+            &[(0, 0, 1), (2, 1, 1)],
+        );
+
+        // non unique lines surrounded by non-matching lines
+        // won"t be found
+        assert_diff_blocks(
+            "aBccDe".as_bytes(),
+            "abccde".as_bytes(),
+            &[(0, 0, 1), (5, 5, 1)],
+        );
+
+        // But they only need to be locally unique
+        assert_diff_blocks(
+            "aBcDec".as_bytes(),
+            "abcdec".as_bytes(),
+            &[(0, 0, 1), (2, 2, 1), (4, 4, 2)],
+        );
+
+        // non unique blocks won"t be matched
+        assert_diff_blocks(
+            "aBcdEcdFg".as_bytes(),
+            "abcdecdfg".as_bytes(),
+            &[(0, 0, 1), (8, 8, 1)],
+        );
+
+        // but locally unique ones will
+        assert_diff_blocks(
+            "aBcdEeXcdFg".as_bytes(),
+            "abcdecdfg".as_bytes(),
+            &[(0, 0, 1), (2, 2, 2), (5, 4, 1), (7, 5, 2), (10, 8, 1)],
+        );
+
+        assert_diff_blocks("abbabbXd".as_bytes(), "cabbabxd".as_bytes(), &[(7, 7, 1)]);
+        assert_diff_blocks("abbabbbb".as_bytes(), "cabbabbc".as_bytes(), &[]);
+        assert_diff_blocks("bbbbbbbb".as_bytes(), "cbbbbbbc".as_bytes(), &[]);
+    }
+
+    #[test]
+    fn test_matching_blocks_tuples() {
+        // Some basic matching tests
+        assert_diff_blocks::<i32>(&[], &[], &[]);
+        assert_diff_blocks(&[["a"], ["b"], ["c,"]], &[], &[]);
+        assert_diff_blocks(&[], &[["a"], ["b"], ["c,"]], &[]);
+        assert_diff_blocks(
+            &[["a"], ["b"], ["c,"]],
+            &[["a"], ["b"], ["c,"]],
+            &[(0, 0, 3)],
+        );
+        assert_diff_blocks(
+            &[["a"], ["b"], ["c,"]],
+            &[["a"], ["b"], ["d,"]],
+            &[(0, 0, 2)],
+        );
+        assert_diff_blocks(
+            &[["d"], ["b"], ["c,"]],
+            &[["a"], ["b"], ["c,"]],
+            &[(1, 1, 2)],
+        );
+        assert_diff_blocks(
+            &[["d"], ["a"], ["b"], ["c,"]],
+            &[["a"], ["b"], ["c,"]],
+            &[(1, 0, 3)],
+        );
+        assert_diff_blocks(
+            &[["a", "b"], ["c", "d"], ["e", "f"]],
+            &[["a", "b"], ["c", "X"], ["e", "f"]],
+            &[(0, 0, 1), (2, 2, 1)],
+        );
+        assert_diff_blocks(
+            &[["a", "b"], ["c", "d"], ["e", "f"]],
+            &[["a", "b"], ["c", "dX"], ["e", "f"]],
+            &[(0, 0, 1), (2, 2, 1)],
+        );
+    }
+
+    #[test]
+    fn test_multiple_ranges() {
+        // There was an earlier bug where we used a bad set of ranges,
+        // this triggers that specific bug, to make sure it doesn"t regress
+        assert_diff_blocks(
+            "abcdefghijklmnop".as_bytes(),
+            "abcXghiYZQRSTUVWXYZijklmnop".as_bytes(),
+            &[(0, 0, 3), (6, 4, 3), (9, 20, 7)],
+        );
+
+        assert_diff_blocks(
+            "ABCd efghIjk  L".as_bytes(),
+            "AxyzBCn mo pqrstuvwI1 2  L".as_bytes(),
+            &[(0, 0, 1), (1, 4, 2), (9, 19, 1), (12, 23, 3)],
+        );
+
+        // These are rot13 code snippets.
+        assert_diff_blocks(
+            &r###"    trg nqqrq jura lbh nqq n svyr va gur qverpgbel.
+        """
+        gnxrf_netf = ['svyr*']
+        gnxrf_bcgvbaf = ['ab-erphefr']
+
+        qrs eha(frys, svyr_yvfg, ab_erphefr=Snyfr):
+            sebz omeyvo.nqq vzcbeg fzneg_nqq, nqq_ercbegre_cevag, nqq_ercbegre_ahyy
+            vs vf_dhvrg():
+                ercbegre = nqq_ercbegre_ahyy
+            ryfr:
+                ercbegre = nqq_ercbegre_cevag
+            fzneg_nqq(svyr_yvfg, abg ab_erphefr, ercbegre)
+
+
+    pynff pzq_zxqve(Pbzznaq):
+    "###
+            .split_inclusive('\n')
+            .collect::<Vec<&str>>(),
+            &r###"    trg nqqrq jura lbh nqq n svyr va gur qverpgbel.
+
+        --qel-eha jvyy fubj juvpu svyrf jbhyq or nqqrq, ohg abg npghnyyl
+        nqq gurz.
+        """
+        gnxrf_netf = ['svyr*']
+        gnxrf_bcgvbaf = ['ab-erphefr', 'qel-eha']
+
+        qrs eha(frys, svyr_yvfg, ab_erphefr=Snyfr, qel_eha=Snyfr):
+            vzcbeg omeyvo.nqq
+
+            vs qel_eha:
+                vs vf_dhvrg():
+                    # Guvf vf cbvagyrff, ohg V'q engure abg envfr na reebe
+                    npgvba = omeyvo.nqq.nqq_npgvba_ahyy
+                ryfr:
+      npgvba = omeyvo.nqq.nqq_npgvba_cevag
+            ryvs vf_dhvrg():
+                npgvba = omeyvo.nqq.nqq_npgvba_nqq
+            ryfr:
+           npgvba = omeyvo.nqq.nqq_npgvba_nqq_naq_cevag
+
+            omeyvo.nqq.fzneg_nqq(svyr_yvfg, abg ab_erphefr, npgvba)
+
+
+    pynff pzq_zxqve(Pbzznaq):
+   "###
+            .split_inclusive('\n')
+            .collect::<Vec<&str>>(),
+            &[(0, 0, 1), (1, 4, 2), (9, 19, 1), (12, 23, 3)],
+        );
+    }
+
+    /* TODO
+        #[test]
+        fn test_opcodes() {
+            fn chk_ops(a, b, expected_codes):
+                let s = PatienceSequenceMatcher::new(a, b);
+                assert_eq!(expected_codes, s.get_opcodes())
+            }
+
+            chk_ops("", "", []);
+            chk_ops([], [], []);
+            chk_ops("abc", "", [("delete", 0, 3, 0, 0)]);
+            chk_ops("", "abc", [("insert", 0, 0, 0, 3)]);
+            chk_ops("abcd", "abcd", [("equal",    0, 4, 0, 4)]);
+            chk_ops("abcd", "abce", [("equal",   0, 3, 0, 3),
+                                     ("replace", 3, 4, 3, 4)
+                                     ]);
+            chk_ops("eabc", "abce", [("delete", 0, 1, 0, 0),
+                                     ("equal",  1, 4, 0, 3),
+                                     ("insert", 4, 4, 3, 4)
+                                     ]);
+            chk_ops("eabce", "abce", [("delete", 0, 1, 0, 0),
+                                      ("equal",  1, 5, 0, 4)
+                                      ])
+            chk_ops("abcde", "abXde", [("equal",   0, 2, 0, 2),
+                                       ("replace", 2, 3, 2, 3),
+                                       ("equal",   3, 5, 3, 5)
+                                       ])
+            chk_ops("abcde", "abXYZde", [("equal",   0, 2, 0, 2),
+                                         ("replace", 2, 3, 2, 5),
+                                         ("equal",   3, 5, 5, 7)
+                                         ])
+            chk_ops("abde", "abXYZde", [("equal",  0, 2, 0, 2),
+                                        ("insert", 2, 2, 2, 5),
+                                        ("equal",  2, 4, 5, 7)
+                                        ])
+            chk_ops("abcdefghijklmnop", "abcdefxydefghijklmnop",
+                    [("equal",  0, 6,  0, 6),
+                     ("insert", 6, 6,  6, 11),
+                     ("equal",  6, 16, 11, 21)
+                     ])
+            chk_ops(
+                    ["hello there\n", "world\n", "how are you today?\n"],
+                    ["hello there\n", "how are you today?\n"],
+                    [("equal",  0, 1, 0, 1),
+                     ("delete", 1, 2, 1, 1),
+                     ("equal",  2, 3, 1, 2),
+                     ])
+            chk_ops("aBccDe", "abccde",
+                    [("equal",   0, 1, 0, 1),
+                     ("replace", 1, 5, 1, 5),
+                     ("equal",   5, 6, 5, 6),
+                     ])
+            chk_ops("aBcDec", "abcdec",
+                    [("equal",   0, 1, 0, 1),
+                     ("replace", 1, 2, 1, 2),
+                     ("equal",   2, 3, 2, 3),
+                     ("replace", 3, 4, 3, 4),
+                     ("equal",   4, 6, 4, 6),
+                     ])
+            chk_ops("aBcdEcdFg", "abcdecdfg",
+                    [("equal",   0, 1, 0, 1),
+                     ("replace", 1, 8, 1, 8),
+                     ("equal",   8, 9, 8, 9)
+                     ])
+            chk_ops("aBcdEeXcdFg", "abcdecdfg",
+                    [("equal",   0, 1, 0, 1),
+                     ("replace", 1, 2, 1, 2),
+                     ("equal",   2, 4, 2, 4),
+                     ("delete", 4, 5, 4, 4),
+                     ("equal",   5, 6, 4, 5),
+                     ("delete", 6, 7, 5, 5),
+                     ("equal",   7, 9, 5, 7),
+                     ("replace", 9, 10, 7, 8),
+                     ("equal",   10, 11, 8, 9)
+                     ]);
+        }
+
+        fn test_grouped_opcodes() {
+            fn chk_ops(a, b, expected_codes, n=3) {
+                s = self._PatienceSequenceMatcher(None, a, b)
+                assert_eq!(expected_codes, list(s.get_grouped_opcodes(n)));
+            }
+
+            chk_ops("", "", [])
+            chk_ops([], [], [])
+            chk_ops("abc", "", [[("delete", 0, 3, 0, 0)]])
+            chk_ops("", "abc", [[("insert", 0, 0, 0, 3)]])
+            chk_ops("abcd", "abcd", [])
+            chk_ops("abcd", "abce", [[("equal",   0, 3, 0, 3),
+                                      ("replace", 3, 4, 3, 4)
+                                      ]])
+            chk_ops("eabc", "abce", [[("delete", 0, 1, 0, 0),
+                                     ("equal",  1, 4, 0, 3),
+                                     ("insert", 4, 4, 3, 4)]])
+            chk_ops("abcdefghijklmnop", "abcdefxydefghijklmnop",
+                    [[("equal",  3, 6, 3, 6),
+                      ("insert", 6, 6, 6, 11),
+                      ("equal",  6, 9, 11, 14)
+                      ]])
+            chk_ops("abcdefghijklmnop", "abcdefxydefghijklmnop",
+                    [[("equal",  2, 6, 2, 6),
+                      ("insert", 6, 6, 6, 11),
+                      ("equal",  6, 10, 11, 15)
+                      ]], 4)
+            chk_ops("Xabcdef", "abcdef",
+                    [[("delete", 0, 1, 0, 0),
+                      ("equal",  1, 4, 0, 3)
+                      ]])
+            chk_ops("abcdef", "abcdefX",
+                    [[("equal",  3, 6, 3, 6),
+                      ("insert", 6, 6, 6, 7)
+                      ]])
+        }
+
+
+        #[test]
+        fn test_patience_unified_diff() {
+            let txt_a = ["hello there\n",
+                     "world\n",
+                     "how are you today?\n"]
+            txt_b = ["hello there\n",
+                     "how are you today?\n"]
+            unified_diff = patiencediff.unified_diff
+            psm = self._PatienceSequenceMatcher
+            assert_eq!(["--- \n",
+                        "+++ \n",
+                        "@@ -1,3 +1,2 @@\n",
+                        " hello there\n",
+                        "-world\n",
+                        " how are you today?\n"
+                        ], list(unified_diff(
+                                 txt_a, txt_b, sequencematcher=psm)))
+            txt_a = [x+"\n" for x in "abcdefghijklmnop"]
+            txt_b = [x+"\n" for x in "abcdefxydefghijklmnop"]
+            // This is the result with LongestCommonSubstring matching
+            assert_eq!(["--- \n",
+                        "+++ \n",
+                        "@@ -1,6 +1,11 @@\n",
+                        " a\n",
+                        " b\n",
+                        " c\n",
+                        "+d\n",
+                        "+e\n",
+                        "+f\n",
+                        "+x\n",
+                        "+y\n",
+                        " d\n",
+                        " e\n",
+                        " f\n"], list(unified_diff(txt_a, txt_b)))
+            // And the patience diff
+            assert_eq!(["--- \n",
+                              "+++ \n",
+                              "@@ -4,6 +4,11 @@\n",
+                              " d\n",
+                              " e\n",
+                              " f\n",
+                              "+x\n",
+                              "+y\n",
+                              "+d\n",
+                              "+e\n",
+                              "+f\n",
+                              " g\n",
+                              " h\n",
+                              " i\n",
+                              ], list(unified_diff(
+                                  txt_a, txt_b, sequencematcher=psm)))
+        }
+
+        #[test]
+        fn test_patience_unified_diff_with_dates() {
+            txt_a = ["hello there\n",
+                     "world\n",
+                     "how are you today?\n"]
+            txt_b = ["hello there\n",
+                     "how are you today?\n"]
+            unified_diff = patiencediff.unified_diff
+            psm = self._PatienceSequenceMatcher
+            assert_eq!(["--- a\t2008-08-08\n",
+                              "+++ b\t2008-09-09\n",
+                              "@@ -1,3 +1,2 @@\n",
+                              " hello there\n",
+                              "-world\n",
+                              " how are you today?\n"
+                              ], list(unified_diff(
+                                  txt_a, txt_b, fromfile="a", tofile="b",
+                                  fromfiledate="2008-08-08",
+                                  tofiledate="2008-09-09",
+                                  sequencematcher=psm)))
+        }
+    */
+}
