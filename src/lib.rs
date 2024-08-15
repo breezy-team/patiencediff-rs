@@ -293,10 +293,66 @@ fn check_consistency(answer: &[(usize, usize, usize)]) {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Opcode {
+    Replace(usize, usize, usize, usize),
+    Delete(usize, usize, usize, usize),
+    Insert(usize, usize, usize, usize),
+    Equal(usize, usize, usize, usize),
+}
+
+impl Opcode {
+    pub fn a_start(&self) -> usize {
+        match self {
+            Opcode::Replace(a_start, _, _, _) => *a_start,
+            Opcode::Delete(a_start, _, _, _) => *a_start,
+            Opcode::Insert(a_start, _, _, _) => *a_start,
+            Opcode::Equal(a_start, _, _, _) => *a_start,
+        }
+    }
+
+    pub fn a_end(&self) -> usize {
+        match self {
+            Opcode::Replace(_, a_end, _, _) => *a_end,
+            Opcode::Delete(_, a_end, _, _) => *a_end,
+            Opcode::Insert(_, a_end, _, _) => *a_end,
+            Opcode::Equal(_, a_end, _, _) => *a_end,
+        }
+    }
+
+    pub fn b_start(&self) -> usize {
+        match self {
+            Opcode::Replace(_, _, b_start, _) => *b_start,
+            Opcode::Delete(_, _, b_start, _) => *b_start,
+            Opcode::Insert(_, _, b_start, _) => *b_start,
+            Opcode::Equal(_, _, b_start, _) => *b_start,
+        }
+    }
+
+    pub fn b_end(&self) -> usize {
+        match self {
+            Opcode::Replace(_, _, _, b_end) => *b_end,
+            Opcode::Delete(_, _, _, b_end) => *b_end,
+            Opcode::Insert(_, _, _, b_end) => *b_end,
+            Opcode::Equal(_, _, _, b_end) => *b_end,
+        }
+    }
+
+    pub fn dupe(&self, a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> Opcode {
+        match self {
+            Opcode::Replace(_, _, _, _) => Opcode::Replace(a_start, a_end, b_start, b_end),
+            Opcode::Delete(_, _, _, _) => Opcode::Delete(a_start, a_end, b_start, b_end),
+            Opcode::Insert(_, _, _, _) => Opcode::Insert(a_start, a_end, b_start, b_end),
+            Opcode::Equal(_, _, _, _) => Opcode::Equal(a_start, a_end, b_start, b_end),
+        }
+    }
+}
+
 pub struct SequenceMatcher<'a, T: PartialEq + Hash + Eq> {
     a: &'a [T],
     b: &'a [T],
     matching_blocks: Option<Vec<(usize, usize, usize)>>,
+    opcodes: Option<Vec<Opcode>>,
 }
 
 impl<'a, T: PartialEq + Hash + Eq> SequenceMatcher<'a, T> {
@@ -305,6 +361,7 @@ impl<'a, T: PartialEq + Hash + Eq> SequenceMatcher<'a, T> {
             a,
             b,
             matching_blocks: None,
+            opcodes: None,
         }
     }
 
@@ -344,6 +401,76 @@ impl<'a, T: PartialEq + Hash + Eq> SequenceMatcher<'a, T> {
         self.matching_blocks = Some(matching_blocks);
         self.matching_blocks.as_ref().unwrap()
     }
+
+    pub fn get_opcodes(&mut self) -> Vec<Opcode> {
+        if self.opcodes.as_ref().is_some() {
+            return self.opcodes.as_ref().unwrap().clone();
+        }
+        self.opcodes = Some(matching_blocks_to_opcodes(self.get_matching_blocks()));
+        self.opcodes.as_ref().unwrap().clone()
+    }
+
+    pub fn get_grouped_opcodes(&mut self, n: usize) -> Vec<Vec<Opcode>> {
+        let mut res = Vec::new();
+        let mut codes = self.get_opcodes();
+        if codes.is_empty() {
+            codes.push(Opcode::Equal(0, 1, 0, 1));
+        }
+
+        if let Some(Opcode::Equal(a_start, a_end, b_start, b_end)) = codes.first_mut() {
+            *a_start = std::cmp::max(*a_start, (*a_end).saturating_sub(n));
+            *b_start = std::cmp::max(*b_start, (*b_end).saturating_sub(n));
+        }
+        if let Some(Opcode::Equal(a_start, a_end, b_start, b_end)) = codes.last_mut() {
+            *a_end = std::cmp::min(*a_start + n, *a_end);
+            *b_end = std::cmp::min(*b_start + n, *b_end);
+        }
+        let nn = n + n;
+        let mut group = Vec::new();
+        for code in &codes {
+            let mut first_start = code.a_start();
+            let mut second_start = code.b_start();
+            if let Opcode::Equal(a_start, a_end, b_start, b_end) = code {
+                if a_end - a_start > nn {
+                    group.push(Opcode::Equal(
+                        *a_start,
+                        std::cmp::min(*a_end, *a_start + n),
+                        *b_start,
+                        std::cmp::min(*b_end, *b_start + n),
+                    ));
+                    res.push(group.clone());
+                    group.clear();
+                    first_start = std::cmp::max(first_start, (*a_end).saturating_sub(n));
+                    second_start = std::cmp::max(second_start, (*b_end).saturating_sub(n));
+                }
+            }
+            group.push(code.dupe(first_start, code.a_end(), second_start, code.b_end()));
+        }
+        if !(group.len() == 1 && matches!(group[0], Opcode::Equal { .. })) || group.is_empty() {
+            res.push(group.clone());
+        }
+        res
+    }
+}
+
+fn matching_blocks_to_opcodes(matching_blocks: &[(usize, usize, usize)]) -> Vec<Opcode> {
+    let mut opcodes = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    for (first_start, second_start, size) in matching_blocks {
+        if i < *first_start && j < *second_start {
+            opcodes.push(Opcode::Replace(i, *first_start, j, *second_start));
+        } else if i < *first_start {
+            opcodes.push(Opcode::Delete(i, *first_start, j, *second_start));
+        } else if j < *second_start {
+            opcodes.push(Opcode::Insert(i, *first_start, j, *second_start));
+        };
+        i = first_start + size;
+        j = second_start + size;
+        if *size != 0 {
+            opcodes.push(Opcode::Equal(*first_start, i, *second_start, j));
+        }
+    }
+    opcodes
 }
 
 #[test]
@@ -353,6 +480,121 @@ fn test_sequence_matcher() {
         s.get_matching_blocks(),
         vec![(0, 0, 2), (3, 2, 2), (5, 4, 0)]
     );
+}
+
+#[cfg(feature = "patchkit")]
+/// Compare two sequences of lines; generate the delta as a unified diff.
+///
+/// Unified diffs are a compact way of showing line changes and a few
+/// lines of context.  The number of context lines is set by 'n' which
+/// defaults to three.
+///
+/// By default, the diff control lines (those with ---, +++, or @@) are
+/// created with a trailing newline.  This is helpful so that inputs
+/// created from file.readlines() result in diffs that are suitable for
+/// file.writelines() since both the inputs and outputs have trailing
+/// newlines.
+///
+/// For inputs that do not have trailing newlines, set the lineterm
+/// argument to "" so that the output will be uniformly newline free.
+///
+/// The unidiff format normally has a header for filenames and modification
+/// times.  Any or all of these may be specified using strings for
+/// 'fromfile', 'tofile', 'fromfiledate', and 'tofiledate'.  The modification
+/// times are normally expressed in the format returned by time.ctime().
+///
+/// # Example
+///
+/// ```rust
+/// use patiencediff::unified_diff;
+///
+/// let lines = unified_diff(
+///     &["one\n", "two\n", "three\n", "four\n"],
+///     &["zero\n", "one\n", "tree\n", "four\n"],
+///     Some("Original"), Some("Current"),
+///     Some("Sat Jan 26 23:30:50 1991"), Some("Fri Jun 06 10:20:52 2003"),
+///     Some(3)).concat();
+///
+/// assert_eq!(lines, r#"--- Original	Sat Jan 26 23:30:50 1991
+/// +++ Current	Fri Jun 06 10:20:52 2003
+/// @@ -1,4 +1,4 @@
+/// +zero
+///  one
+/// -two
+/// -three
+/// +tree
+///  four
+/// "#);
+/// ```
+pub fn unified_diff(
+    a: &[&str],
+    b: &[&str],
+    from_file: Option<&str>,
+    to_file: Option<&str>,
+    from_file_date: Option<&str>,
+    to_file_date: Option<&str>,
+    n: Option<usize>,
+) -> Vec<String> {
+    let n = n.unwrap_or(3);
+    let mut sm = SequenceMatcher::new(a, b);
+
+    let mut patch = patchkit::patch::UnifiedPatch {
+        orig_name: from_file.map_or(&b""[..], |x| x.as_bytes()).to_vec(),
+        mod_name: to_file.map_or(&b""[..], |x| x.as_bytes()).to_vec(),
+        orig_ts: from_file_date.map(|x| x.as_bytes().to_vec()),
+        mod_ts: to_file_date.map(|x| x.as_bytes().to_vec()),
+        hunks: vec![],
+    };
+
+    for group in sm.get_grouped_opcodes(n) {
+        let mut hunk = patchkit::patch::Hunk {
+            orig_pos: group[0].a_start() + 1,
+            orig_range: group.last().unwrap().a_end() - group[0].a_start(),
+            mod_pos: group[0].b_start() + 1,
+            mod_range: group.last().unwrap().b_end() - group[0].b_start(),
+            lines: Vec::new(),
+            tail: None,
+        };
+
+        for opcode in group {
+            if let Opcode::Equal(a_start, a_end, ..) = opcode {
+                for line in a[a_start..a_end].iter() {
+                    hunk.lines.push(patchkit::patch::HunkLine::ContextLine(
+                        line.as_bytes().to_vec(),
+                    ));
+                }
+                continue;
+            }
+
+            if matches!(opcode, Opcode::Replace(..) | Opcode::Delete(..)) {
+                for line in a[opcode.a_start()..opcode.a_end()].iter() {
+                    hunk.lines.push(patchkit::patch::HunkLine::RemoveLine(
+                        line.as_bytes().to_vec(),
+                    ));
+                }
+            }
+
+            if matches!(opcode, Opcode::Replace(..) | Opcode::Insert(..)) {
+                for line in b[opcode.b_start()..opcode.b_end()].iter() {
+                    hunk.lines.push(patchkit::patch::HunkLine::InsertLine(
+                        line.as_bytes().to_vec(),
+                    ));
+                }
+            }
+        }
+
+        patch.hunks.push(hunk);
+    }
+
+    if patch.hunks.is_empty() {
+        Vec::new()
+    } else {
+        String::from_utf8(patch.as_bytes())
+            .unwrap()
+            .split_inclusive('\n')
+            .map(|x| x.to_string())
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -579,194 +821,303 @@ mod sequence_matcher_tests {
         );
     }
 
-    /* TODO
-        #[test]
-        fn test_opcodes() {
-            fn chk_ops(a, b, expected_codes):
-                let s = PatienceSequenceMatcher::new(a, b);
-                assert_eq!(expected_codes, s.get_opcodes())
-            }
-
-            chk_ops("", "", []);
-            chk_ops([], [], []);
-            chk_ops("abc", "", [("delete", 0, 3, 0, 0)]);
-            chk_ops("", "abc", [("insert", 0, 0, 0, 3)]);
-            chk_ops("abcd", "abcd", [("equal",    0, 4, 0, 4)]);
-            chk_ops("abcd", "abce", [("equal",   0, 3, 0, 3),
-                                     ("replace", 3, 4, 3, 4)
-                                     ]);
-            chk_ops("eabc", "abce", [("delete", 0, 1, 0, 0),
-                                     ("equal",  1, 4, 0, 3),
-                                     ("insert", 4, 4, 3, 4)
-                                     ]);
-            chk_ops("eabce", "abce", [("delete", 0, 1, 0, 0),
-                                      ("equal",  1, 5, 0, 4)
-                                      ])
-            chk_ops("abcde", "abXde", [("equal",   0, 2, 0, 2),
-                                       ("replace", 2, 3, 2, 3),
-                                       ("equal",   3, 5, 3, 5)
-                                       ])
-            chk_ops("abcde", "abXYZde", [("equal",   0, 2, 0, 2),
-                                         ("replace", 2, 3, 2, 5),
-                                         ("equal",   3, 5, 5, 7)
-                                         ])
-            chk_ops("abde", "abXYZde", [("equal",  0, 2, 0, 2),
-                                        ("insert", 2, 2, 2, 5),
-                                        ("equal",  2, 4, 5, 7)
-                                        ])
-            chk_ops("abcdefghijklmnop", "abcdefxydefghijklmnop",
-                    [("equal",  0, 6,  0, 6),
-                     ("insert", 6, 6,  6, 11),
-                     ("equal",  6, 16, 11, 21)
-                     ])
-            chk_ops(
-                    ["hello there\n", "world\n", "how are you today?\n"],
-                    ["hello there\n", "how are you today?\n"],
-                    [("equal",  0, 1, 0, 1),
-                     ("delete", 1, 2, 1, 1),
-                     ("equal",  2, 3, 1, 2),
-                     ])
-            chk_ops("aBccDe", "abccde",
-                    [("equal",   0, 1, 0, 1),
-                     ("replace", 1, 5, 1, 5),
-                     ("equal",   5, 6, 5, 6),
-                     ])
-            chk_ops("aBcDec", "abcdec",
-                    [("equal",   0, 1, 0, 1),
-                     ("replace", 1, 2, 1, 2),
-                     ("equal",   2, 3, 2, 3),
-                     ("replace", 3, 4, 3, 4),
-                     ("equal",   4, 6, 4, 6),
-                     ])
-            chk_ops("aBcdEcdFg", "abcdecdfg",
-                    [("equal",   0, 1, 0, 1),
-                     ("replace", 1, 8, 1, 8),
-                     ("equal",   8, 9, 8, 9)
-                     ])
-            chk_ops("aBcdEeXcdFg", "abcdecdfg",
-                    [("equal",   0, 1, 0, 1),
-                     ("replace", 1, 2, 1, 2),
-                     ("equal",   2, 4, 2, 4),
-                     ("delete", 4, 5, 4, 4),
-                     ("equal",   5, 6, 4, 5),
-                     ("delete", 6, 7, 5, 5),
-                     ("equal",   7, 9, 5, 7),
-                     ("replace", 9, 10, 7, 8),
-                     ("equal",   10, 11, 8, 9)
-                     ]);
+    #[test]
+    fn test_opcodes() {
+        fn chk_ops_str(a: &str, b: &str, expected_codes: &[Opcode]) {
+            let a = a.as_bytes();
+            let b = b.as_bytes();
+            let mut sm = SequenceMatcher::new(a, b);
+            assert_eq!(expected_codes, sm.get_opcodes());
         }
 
-        fn test_grouped_opcodes() {
-            fn chk_ops(a, b, expected_codes, n=3) {
-                s = self._PatienceSequenceMatcher(None, a, b)
-                assert_eq!(expected_codes, list(s.get_grouped_opcodes(n)));
-            }
-
-            chk_ops("", "", [])
-            chk_ops([], [], [])
-            chk_ops("abc", "", [[("delete", 0, 3, 0, 0)]])
-            chk_ops("", "abc", [[("insert", 0, 0, 0, 3)]])
-            chk_ops("abcd", "abcd", [])
-            chk_ops("abcd", "abce", [[("equal",   0, 3, 0, 3),
-                                      ("replace", 3, 4, 3, 4)
-                                      ]])
-            chk_ops("eabc", "abce", [[("delete", 0, 1, 0, 0),
-                                     ("equal",  1, 4, 0, 3),
-                                     ("insert", 4, 4, 3, 4)]])
-            chk_ops("abcdefghijklmnop", "abcdefxydefghijklmnop",
-                    [[("equal",  3, 6, 3, 6),
-                      ("insert", 6, 6, 6, 11),
-                      ("equal",  6, 9, 11, 14)
-                      ]])
-            chk_ops("abcdefghijklmnop", "abcdefxydefghijklmnop",
-                    [[("equal",  2, 6, 2, 6),
-                      ("insert", 6, 6, 6, 11),
-                      ("equal",  6, 10, 11, 15)
-                      ]], 4)
-            chk_ops("Xabcdef", "abcdef",
-                    [[("delete", 0, 1, 0, 0),
-                      ("equal",  1, 4, 0, 3)
-                      ]])
-            chk_ops("abcdef", "abcdefX",
-                    [[("equal",  3, 6, 3, 6),
-                      ("insert", 6, 6, 6, 7)
-                      ]])
+        fn chk_ops_strlist(a: &[&str], b: &[&str], expected_codes: &[Opcode]) {
+            let a = a.iter().map(|x| x.as_bytes()).collect::<Vec<&[u8]>>();
+            let b = b.iter().map(|x| x.as_bytes()).collect::<Vec<&[u8]>>();
+            let mut sm = SequenceMatcher::new(&a, &b);
+            assert_eq!(expected_codes, sm.get_opcodes());
         }
 
+        chk_ops_str("", "", &[]);
+        chk_ops_strlist(&[], &[], &[]);
+        chk_ops_str("abc", "", &[Opcode::Delete(0, 3, 0, 0)]);
+        chk_ops_str("", "abc", &[Opcode::Insert(0, 0, 0, 3)]);
+        chk_ops_str("abcd", "abcd", &[Opcode::Equal(0, 4, 0, 4)]);
+        chk_ops_str(
+            "abcd",
+            "abce",
+            &[Opcode::Equal(0, 3, 0, 3), Opcode::Replace(3, 4, 3, 4)],
+        );
+        chk_ops_str(
+            "eabc",
+            "abce",
+            &[
+                Opcode::Delete(0, 1, 0, 0),
+                Opcode::Equal(1, 4, 0, 3),
+                Opcode::Insert(4, 4, 3, 4),
+            ],
+        );
+        chk_ops_str(
+            "eabce",
+            "abce",
+            &[Opcode::Delete(0, 1, 0, 0), Opcode::Equal(1, 5, 0, 4)],
+        );
+        chk_ops_str(
+            "abcde",
+            "abXde",
+            &[
+                Opcode::Equal(0, 2, 0, 2),
+                Opcode::Replace(2, 3, 2, 3),
+                Opcode::Equal(3, 5, 3, 5),
+            ],
+        );
+        chk_ops_str(
+            "abcde",
+            "abXYZde",
+            &[
+                Opcode::Equal(0, 2, 0, 2),
+                Opcode::Replace(2, 3, 2, 5),
+                Opcode::Equal(3, 5, 5, 7),
+            ],
+        );
+        chk_ops_str(
+            "abde",
+            "abXYZde",
+            &[
+                Opcode::Equal(0, 2, 0, 2),
+                Opcode::Insert(2, 2, 2, 5),
+                Opcode::Equal(2, 4, 5, 7),
+            ],
+        );
+        chk_ops_str(
+            "abcdefghijklmnop",
+            "abcdefxydefghijklmnop",
+            &[
+                Opcode::Equal(0, 6, 0, 6),
+                Opcode::Insert(6, 6, 6, 11),
+                Opcode::Equal(6, 16, 11, 21),
+            ],
+        );
+        chk_ops_strlist(
+            &["hello there\n", "world\n", "how are you today?\n"],
+            &["hello there\n", "how are you today?\n"],
+            &[
+                Opcode::Equal(0, 1, 0, 1),
+                Opcode::Delete(1, 2, 1, 1),
+                Opcode::Equal(2, 3, 1, 2),
+            ],
+        );
+        chk_ops_str(
+            "aBccDe",
+            "abccde",
+            &[
+                Opcode::Equal(0, 1, 0, 1),
+                Opcode::Replace(1, 5, 1, 5),
+                Opcode::Equal(5, 6, 5, 6),
+            ],
+        );
+        chk_ops_str(
+            "aBcDec",
+            "abcdec",
+            &[
+                Opcode::Equal(0, 1, 0, 1),
+                Opcode::Replace(1, 2, 1, 2),
+                Opcode::Equal(2, 3, 2, 3),
+                Opcode::Replace(3, 4, 3, 4),
+                Opcode::Equal(4, 6, 4, 6),
+            ],
+        );
+        chk_ops_str(
+            "aBcdEcdFg",
+            "abcdecdfg",
+            &[
+                Opcode::Equal(0, 1, 0, 1),
+                Opcode::Replace(1, 8, 1, 8),
+                Opcode::Equal(8, 9, 8, 9),
+            ],
+        );
+        chk_ops_str(
+            "aBcdEeXcdFg",
+            "abcdecdfg",
+            &[
+                Opcode::Equal(0, 1, 0, 1),
+                Opcode::Replace(1, 2, 1, 2),
+                Opcode::Equal(2, 4, 2, 4),
+                Opcode::Delete(4, 5, 4, 4),
+                Opcode::Equal(5, 6, 4, 5),
+                Opcode::Delete(6, 7, 5, 5),
+                Opcode::Equal(7, 9, 5, 7),
+                Opcode::Replace(9, 10, 7, 8),
+                Opcode::Equal(10, 11, 8, 9),
+            ],
+        );
+    }
 
-        #[test]
-        fn test_patience_unified_diff() {
-            let txt_a = ["hello there\n",
-                     "world\n",
-                     "how are you today?\n"]
-            txt_b = ["hello there\n",
-                     "how are you today?\n"]
-            unified_diff = patiencediff.unified_diff
-            psm = self._PatienceSequenceMatcher
-            assert_eq!(["--- \n",
-                        "+++ \n",
-                        "@@ -1,3 +1,2 @@\n",
-                        " hello there\n",
-                        "-world\n",
-                        " how are you today?\n"
-                        ], list(unified_diff(
-                                 txt_a, txt_b, sequencematcher=psm)))
-            txt_a = [x+"\n" for x in "abcdefghijklmnop"]
-            txt_b = [x+"\n" for x in "abcdefxydefghijklmnop"]
-            // This is the result with LongestCommonSubstring matching
-            assert_eq!(["--- \n",
-                        "+++ \n",
-                        "@@ -1,6 +1,11 @@\n",
-                        " a\n",
-                        " b\n",
-                        " c\n",
-                        "+d\n",
-                        "+e\n",
-                        "+f\n",
-                        "+x\n",
-                        "+y\n",
-                        " d\n",
-                        " e\n",
-                        " f\n"], list(unified_diff(txt_a, txt_b)))
-            // And the patience diff
-            assert_eq!(["--- \n",
-                              "+++ \n",
-                              "@@ -4,6 +4,11 @@\n",
-                              " d\n",
-                              " e\n",
-                              " f\n",
-                              "+x\n",
-                              "+y\n",
-                              "+d\n",
-                              "+e\n",
-                              "+f\n",
-                              " g\n",
-                              " h\n",
-                              " i\n",
-                              ], list(unified_diff(
-                                  txt_a, txt_b, sequencematcher=psm)))
+    #[test]
+    fn test_grouped_opcodes() {
+        fn chk_ops_str(a: &str, b: &str, expected_codes: &[&[Opcode]], c: Option<usize>) {
+            let a = a.as_bytes();
+            let b = b.as_bytes();
+            let c = c.unwrap_or(3);
+            let mut sm = SequenceMatcher::new(a, b);
+            assert_eq!(expected_codes, sm.get_grouped_opcodes(c));
         }
 
-        #[test]
-        fn test_patience_unified_diff_with_dates() {
-            txt_a = ["hello there\n",
-                     "world\n",
-                     "how are you today?\n"]
-            txt_b = ["hello there\n",
-                     "how are you today?\n"]
-            unified_diff = patiencediff.unified_diff
-            psm = self._PatienceSequenceMatcher
-            assert_eq!(["--- a\t2008-08-08\n",
-                              "+++ b\t2008-09-09\n",
-                              "@@ -1,3 +1,2 @@\n",
-                              " hello there\n",
-                              "-world\n",
-                              " how are you today?\n"
-                              ], list(unified_diff(
-                                  txt_a, txt_b, fromfile="a", tofile="b",
-                                  fromfiledate="2008-08-08",
-                                  tofiledate="2008-09-09",
-                                  sequencematcher=psm)))
+        fn chk_ops_strlist(a: &[&str], b: &[&str], expected_codes: &[&[Opcode]], c: Option<usize>) {
+            let a = a.iter().map(|x| x.as_bytes()).collect::<Vec<&[u8]>>();
+            let b = b.iter().map(|x| x.as_bytes()).collect::<Vec<&[u8]>>();
+            let c = c.unwrap_or(3);
+            let mut sm = SequenceMatcher::new(&a, &b);
+            assert_eq!(expected_codes, sm.get_grouped_opcodes(c));
         }
-    */
+
+        chk_ops_str("", "", &[], None);
+        chk_ops_strlist(&[], &[], &[], None);
+        chk_ops_str("abc", "", &[&[Opcode::Delete(0, 3, 0, 0)]], None);
+        chk_ops_str("", "abc", &[&[Opcode::Insert(0, 0, 0, 3)]], None);
+        chk_ops_str("abcd", "abcd", &[], None);
+        chk_ops_str(
+            "abcd",
+            "abce",
+            &[&[Opcode::Equal(0, 3, 0, 3), Opcode::Replace(3, 4, 3, 4)]],
+            None,
+        );
+        chk_ops_str(
+            "eabc",
+            "abce",
+            &[&[
+                Opcode::Delete(0, 1, 0, 0),
+                Opcode::Equal(1, 4, 0, 3),
+                Opcode::Insert(4, 4, 3, 4),
+            ]],
+            None,
+        );
+        chk_ops_str(
+            "abcdefghijklmnop",
+            "abcdefxydefghijklmnop",
+            &[&[
+                Opcode::Equal(3, 6, 3, 6),
+                Opcode::Insert(6, 6, 6, 11),
+                Opcode::Equal(6, 9, 11, 14),
+            ]],
+            None,
+        );
+        chk_ops_str(
+            "abcdefghijklmnop",
+            "abcdefxydefghijklmnop",
+            &[&[
+                Opcode::Equal(2, 6, 2, 6),
+                Opcode::Insert(6, 6, 6, 11),
+                Opcode::Equal(6, 10, 11, 15),
+            ]],
+            Some(4),
+        );
+        chk_ops_str(
+            "Xabcdef",
+            "abcdef",
+            &[&[Opcode::Delete(0, 1, 0, 0), Opcode::Equal(1, 4, 0, 3)]],
+            None,
+        );
+        chk_ops_str(
+            "abcdef",
+            "abcdefX",
+            &[&[Opcode::Equal(3, 6, 3, 6), Opcode::Insert(6, 6, 6, 7)]],
+            None,
+        );
+    }
+
+    #[cfg(feature = "patchkit")]
+    #[test]
+    fn test_patience_unified_diff() {
+        let txt_a = vec!["hello there\n", "world\n", "how are you today?\n"];
+        let txt_b = vec!["hello there\n", "how are you today?\n"];
+
+        assert_eq!(
+            vec![
+                "--- \n",
+                "+++ \n",
+                "@@ -1,3 +1,2 @@\n",
+                " hello there\n",
+                "-world\n",
+                " how are you today?\n"
+            ],
+            unified_diff(
+                txt_a.as_slice(),
+                txt_b.as_slice(),
+                None,
+                None,
+                None,
+                None,
+                Some(3)
+            )
+        );
+        let txt_a = "abcdefghijklmnop"
+            .chars()
+            .map(|x| format!("{}\n", x))
+            .collect::<Vec<String>>();
+        let txt_b = "abcdefxydefghijklmnop"
+            .chars()
+            .map(|x| format!("{}\n", x))
+            .collect::<Vec<String>>();
+        assert_eq!(
+            vec![
+                "--- \n",
+                "+++ \n",
+                "@@ -4,6 +4,11 @@\n",
+                " d\n",
+                " e\n",
+                " f\n",
+                "+x\n",
+                "+y\n",
+                "+d\n",
+                "+e\n",
+                "+f\n",
+                " g\n",
+                " h\n",
+                " i\n",
+            ],
+            unified_diff(
+                txt_a
+                    .iter()
+                    .map(|x| x.as_str())
+                    .collect::<Vec<&str>>()
+                    .as_slice(),
+                txt_b
+                    .iter()
+                    .map(|x| x.as_str())
+                    .collect::<Vec<&str>>()
+                    .as_slice(),
+                None,
+                None,
+                None,
+                None,
+                Some(3)
+            )
+        );
+    }
+
+    #[cfg(feature = "patchkit")]
+    #[test]
+    fn test_patience_unified_diff_with_dates() {
+        let txt_a = vec!["hello there\n", "world\n", "how are you today?\n"];
+        let txt_b = vec!["hello there\n", "how are you today?\n"];
+        assert_eq!(
+            vec![
+                "--- a\t2008-08-08\n",
+                "+++ b\t2008-09-09\n",
+                "@@ -1,3 +1,2 @@\n",
+                " hello there\n",
+                "-world\n",
+                " how are you today?\n"
+            ],
+            unified_diff(
+                txt_a.as_slice(),
+                txt_b.as_slice(),
+                Some("a"),
+                Some("b"),
+                Some("2008-08-08"),
+                Some("2008-09-09"),
+                None
+            )
+        );
+    }
 }
