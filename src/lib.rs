@@ -482,6 +482,7 @@ fn test_sequence_matcher() {
     );
 }
 
+#[cfg(feature = "patchkit")]
 /// Compare two sequences of lines; generate the delta as a unified diff.
 ///
 /// Unified diffs are a compact way of showing line changes and a few
@@ -1024,6 +1025,7 @@ mod sequence_matcher_tests {
         );
     }
 
+    #[cfg(feature = "patchkit")]
     #[test]
     fn test_patience_unified_diff() {
         let txt_a = vec!["hello there\n", "world\n", "how are you today?\n"];
@@ -1093,6 +1095,7 @@ mod sequence_matcher_tests {
         );
     }
 
+    #[cfg(feature = "patchkit")]
     #[test]
     fn test_patience_unified_diff_with_dates() {
         let txt_a = vec!["hello there\n", "world\n", "how are you today?\n"];

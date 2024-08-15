@@ -12,13 +12,14 @@ repository = "https://github.com/breezy-team/patiencediff-rs"
 
 [dependencies]
 clap = { version = "4", optional = true, features = ["derive"] }
-patchkit = "0.1.8"
+patchkit = { version = "0.1.8", optional = true }
 
 [features]
 cli = ["dep:clap"]
-default = ["cli"]
+default = ["cli", "patchkit"]
+patchkit = ["dep:patchkit"]
 
 [[bin]]
 name = "patiencediff"
 path = "src/main.rs"
-required-features = ["cli"]
+required-features = ["cli", "patchkit"]
