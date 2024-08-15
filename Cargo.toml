@@ -9,3 +9,16 @@ license = "GPL-2.0+"
 repository = "https://github.com/breezy-team/patiencediff-rs"
 
 [lib]
+
+[dependencies]
+clap = { version = "4", optional = true, features = ["derive"] }
+patchkit = "0.1.8"
+
+[features]
+cli = ["dep:clap"]
+default = ["cli"]
+
+[[bin]]
+name = "patiencediff"
+path = "src/main.rs"
+required-features = ["cli"]
