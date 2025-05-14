@@ -483,6 +483,9 @@ fn test_sequence_matcher() {
 }
 
 #[cfg(feature = "patchkit")]
+use patchkit::unified::{Hunk, HunkLine, UnifiedPatch};
+
+#[cfg(feature = "patchkit")]
 /// Compare two sequences of lines; generate the delta as a unified diff.
 ///
 /// Unified diffs are a compact way of showing line changes and a few
@@ -538,7 +541,7 @@ pub fn unified_diff(
     let n = n.unwrap_or(3);
     let mut sm = SequenceMatcher::new(a, b);
 
-    let mut patch = patchkit::patch::UnifiedPatch {
+    let mut patch = UnifiedPatch {
         orig_name: from_file.map_or(&b""[..], |x| x.as_bytes()).to_vec(),
         mod_name: to_file.map_or(&b""[..], |x| x.as_bytes()).to_vec(),
         orig_ts: from_file_date.map(|x| x.as_bytes().to_vec()),
@@ -547,7 +550,7 @@ pub fn unified_diff(
     };
 
     for group in sm.get_grouped_opcodes(n) {
-        let mut hunk = patchkit::patch::Hunk {
+        let mut hunk = Hunk {
             orig_pos: group[0].a_start() + 1,
             orig_range: group.last().unwrap().a_end() - group[0].a_start(),
             mod_pos: group[0].b_start() + 1,
@@ -559,26 +562,23 @@ pub fn unified_diff(
         for opcode in group {
             if let Opcode::Equal(a_start, a_end, ..) = opcode {
                 for line in a[a_start..a_end].iter() {
-                    hunk.lines.push(patchkit::patch::HunkLine::ContextLine(
-                        line.as_bytes().to_vec(),
-                    ));
+                    hunk.lines
+                        .push(HunkLine::ContextLine(line.as_bytes().to_vec()));
                 }
                 continue;
             }
 
             if matches!(opcode, Opcode::Replace(..) | Opcode::Delete(..)) {
                 for line in a[opcode.a_start()..opcode.a_end()].iter() {
-                    hunk.lines.push(patchkit::patch::HunkLine::RemoveLine(
-                        line.as_bytes().to_vec(),
-                    ));
+                    hunk.lines
+                        .push(HunkLine::RemoveLine(line.as_bytes().to_vec()));
                 }
             }
 
             if matches!(opcode, Opcode::Replace(..) | Opcode::Insert(..)) {
                 for line in b[opcode.b_start()..opcode.b_end()].iter() {
-                    hunk.lines.push(patchkit::patch::HunkLine::InsertLine(
-                        line.as_bytes().to_vec(),
-                    ));
+                    hunk.lines
+                        .push(HunkLine::InsertLine(line.as_bytes().to_vec()));
                 }
             }
         }

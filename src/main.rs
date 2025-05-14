@@ -13,9 +13,6 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let from_meta = std::fs::metadata(&args.from_file).expect("from_file not found");
-    let to_meta = std::fs::metadata(&args.to_file).expect("to_file not found");
-
     let from_file = std::fs::read_to_string(&args.from_file).expect("from_file not found");
     let to_file = std::fs::read_to_string(&args.to_file).expect("to_file not found");
 
