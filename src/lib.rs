@@ -348,18 +348,28 @@ impl Opcode {
     }
 }
 
-pub struct SequenceMatcher<'a, T: PartialEq + Hash + Eq> {
-    a: &'a [T],
-    b: &'a [T],
+pub struct SequenceMatcher<T>
+where
+    T: PartialEq + Hash + Eq + Clone + ?Sized,
+{
+    a: Vec<T>,
+    b: Vec<T>,
     matching_blocks: Option<Vec<(usize, usize, usize)>>,
     opcodes: Option<Vec<Opcode>>,
 }
 
-impl<'a, T: PartialEq + Hash + Eq> SequenceMatcher<'a, T> {
-    pub fn new(a: &'a [T], b: &'a [T]) -> SequenceMatcher<'a, T> {
+impl<T> SequenceMatcher<T>
+where
+    T: PartialEq + Hash + Eq + Clone,
+{
+    pub fn new<A, B>(a: A, b: B) -> Self
+    where
+        A: AsRef<[T]>,
+        B: AsRef<[T]>,
+    {
         SequenceMatcher {
-            a,
-            b,
+            a: a.as_ref().to_vec(),
+            b: b.as_ref().to_vec(),
             matching_blocks: None,
             opcodes: None,
         }
@@ -381,8 +391,8 @@ impl<'a, T: PartialEq + Hash + Eq> SequenceMatcher<'a, T> {
 
         let mut matches = vec![];
         recurse_matches(
-            self.a,
-            self.b,
+            &self.a,
+            &self.b,
             0,
             0,
             self.a.len(),
@@ -475,11 +485,27 @@ fn matching_blocks_to_opcodes(matching_blocks: &[(usize, usize, usize)]) -> Vec<
 
 #[test]
 fn test_sequence_matcher() {
+    // Test with byte string slices
     let mut s = SequenceMatcher::new(b"abxcd", b"abcd");
     assert_eq!(
         s.get_matching_blocks(),
         vec![(0, 0, 2), (3, 2, 2), (5, 4, 0)]
     );
+
+    // Test with owned vectors
+    let vec_a = vec![1, 2, 3, 4, 5];
+    let vec_b = vec![1, 2, 7, 4, 5];
+    let mut s = SequenceMatcher::new(vec_a, vec_b);
+    assert_eq!(
+        s.get_matching_blocks(),
+        vec![(0, 0, 2), (3, 3, 2), (5, 5, 0)]
+    );
+
+    // Test with slices from arrays
+    let arr_a = [10, 20, 30, 40];
+    let arr_b = [10, 20, 30, 50];
+    let mut s = SequenceMatcher::new(&arr_a[..], &arr_b[..]);
+    assert_eq!(s.get_matching_blocks(), vec![(0, 0, 3), (4, 4, 0)]);
 }
 
 #[cfg(feature = "patchkit")]
@@ -624,7 +650,7 @@ mod sequence_matcher_tests {
     /// * `a` - A sequence to match
     /// * `b` - Another sequence to match
     /// * `expected_blocks` - The expected output, not including the final matching block (a.len(), b.len(), 0)
-    fn assert_diff_blocks<T: Eq + std::hash::Hash>(
+    fn assert_diff_blocks<T: Eq + std::hash::Hash + Clone>(
         a: &[T],
         b: &[T],
         expected_blocks: &[(usize, usize, usize)],
