@@ -19,11 +19,14 @@ fn main() {
     let from_lines = from_file.split_inclusive('\n').collect::<Vec<_>>();
     let to_lines = to_file.split_inclusive('\n').collect::<Vec<_>>();
 
+    let from_path = args.from_file.to_string_lossy();
+    let to_path = args.to_file.to_string_lossy();
+
     let outlines = patiencediff::unified_diff(
         &from_lines,
         &to_lines,
-        Some(args.from_file.to_string_lossy().as_ref()),
-        Some(args.to_file.to_string_lossy().as_ref()),
+        Some(&from_path),
+        Some(&to_path),
         None,
         None,
         Some(args.context),

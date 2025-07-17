@@ -23,11 +23,10 @@ pub fn unique_lcs<A: Eq + Hash>(a: &[A], b: &[A]) -> Vec<(usize, usize)> {
     // Create a mapping of line -> position in a, filtering out duplicate lines
     let mut index: HashMap<&A, Option<usize>> = HashMap::new();
     for (i, line) in a.iter().enumerate() {
-        if !index.contains_key(line) {
-            index.insert(line, Some(i));
-        } else {
-            index.insert(line, None);
-        }
+        index
+            .entry(line)
+            .and_modify(|e| *e = None)
+            .or_insert(Some(i));
     }
 
     // Create an array btoa where btoa[i] = position of line i in a, unless
@@ -35,14 +34,17 @@ pub fn unique_lcs<A: Eq + Hash>(a: &[A], b: &[A]) -> Vec<(usize, usize)> {
     let mut btoa: Vec<Option<usize>> = vec![None; b.len()];
     let mut index2: HashMap<&A, usize> = HashMap::new();
     for (pos, line) in b.iter().enumerate() {
-        if let Some(Some(next)) = index.get(line) {
-            if index2.contains_key(line) {
-                // Unset the previous mapping, which we now know to be invalid because the line isn't unique
-                btoa[index2[line]] = None;
-                index.remove(line);
-            } else {
-                index2.insert(line, pos);
-                btoa[pos] = Some(*next);
+        if let Some(&Some(next)) = index.get(line) {
+            match index2.entry(line) {
+                std::collections::hash_map::Entry::Occupied(e) => {
+                    // Unset the previous mapping, which we now know to be invalid because the line isn't unique
+                    btoa[*e.get()] = None;
+                    index.remove(line);
+                }
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(pos);
+                    btoa[pos] = Some(next);
+                }
             }
         }
     }
@@ -304,37 +306,37 @@ pub enum Opcode {
 impl Opcode {
     pub fn a_start(&self) -> usize {
         match self {
-            Opcode::Replace(a_start, _, _, _) => *a_start,
-            Opcode::Delete(a_start, _, _, _) => *a_start,
-            Opcode::Insert(a_start, _, _, _) => *a_start,
-            Opcode::Equal(a_start, _, _, _) => *a_start,
+            Opcode::Replace(a_start, _, _, _)
+            | Opcode::Delete(a_start, _, _, _)
+            | Opcode::Insert(a_start, _, _, _)
+            | Opcode::Equal(a_start, _, _, _) => *a_start,
         }
     }
 
     pub fn a_end(&self) -> usize {
         match self {
-            Opcode::Replace(_, a_end, _, _) => *a_end,
-            Opcode::Delete(_, a_end, _, _) => *a_end,
-            Opcode::Insert(_, a_end, _, _) => *a_end,
-            Opcode::Equal(_, a_end, _, _) => *a_end,
+            Opcode::Replace(_, a_end, _, _)
+            | Opcode::Delete(_, a_end, _, _)
+            | Opcode::Insert(_, a_end, _, _)
+            | Opcode::Equal(_, a_end, _, _) => *a_end,
         }
     }
 
     pub fn b_start(&self) -> usize {
         match self {
-            Opcode::Replace(_, _, b_start, _) => *b_start,
-            Opcode::Delete(_, _, b_start, _) => *b_start,
-            Opcode::Insert(_, _, b_start, _) => *b_start,
-            Opcode::Equal(_, _, b_start, _) => *b_start,
+            Opcode::Replace(_, _, b_start, _)
+            | Opcode::Delete(_, _, b_start, _)
+            | Opcode::Insert(_, _, b_start, _)
+            | Opcode::Equal(_, _, b_start, _) => *b_start,
         }
     }
 
     pub fn b_end(&self) -> usize {
         match self {
-            Opcode::Replace(_, _, _, b_end) => *b_end,
-            Opcode::Delete(_, _, _, b_end) => *b_end,
-            Opcode::Insert(_, _, _, b_end) => *b_end,
-            Opcode::Equal(_, _, _, b_end) => *b_end,
+            Opcode::Replace(_, _, _, b_end)
+            | Opcode::Delete(_, _, _, b_end)
+            | Opcode::Insert(_, _, _, b_end)
+            | Opcode::Equal(_, _, _, b_end) => *b_end,
         }
     }
 
@@ -348,28 +350,24 @@ impl Opcode {
     }
 }
 
-pub struct SequenceMatcher<T>
+pub struct SequenceMatcher<'a, T>
 where
-    T: PartialEq + Hash + Eq + Clone + ?Sized,
+    T: PartialEq + Hash + Eq,
 {
-    a: Vec<T>,
-    b: Vec<T>,
+    a: &'a [T],
+    b: &'a [T],
     matching_blocks: Option<Vec<(usize, usize, usize)>>,
     opcodes: Option<Vec<Opcode>>,
 }
 
-impl<T> SequenceMatcher<T>
+impl<'a, T> SequenceMatcher<'a, T>
 where
-    T: PartialEq + Hash + Eq + Clone,
+    T: PartialEq + Hash + Eq,
 {
-    pub fn new<A, B>(a: A, b: B) -> Self
-    where
-        A: AsRef<[T]>,
-        B: AsRef<[T]>,
-    {
+    pub fn new(a: &'a [T], b: &'a [T]) -> Self {
         SequenceMatcher {
-            a: a.as_ref().to_vec(),
-            b: b.as_ref().to_vec(),
+            a,
+            b,
             matching_blocks: None,
             opcodes: None,
         }
@@ -391,8 +389,8 @@ where
 
         let mut matches = vec![];
         recurse_matches(
-            &self.a,
-            &self.b,
+            self.a,
+            self.b,
             0,
             0,
             self.a.len(),
@@ -412,17 +410,16 @@ where
         self.matching_blocks.as_ref().unwrap()
     }
 
-    pub fn get_opcodes(&mut self) -> Vec<Opcode> {
-        if self.opcodes.as_ref().is_some() {
-            return self.opcodes.as_ref().unwrap().clone();
+    pub fn get_opcodes(&mut self) -> &[Opcode] {
+        if self.opcodes.is_none() {
+            self.opcodes = Some(matching_blocks_to_opcodes(self.get_matching_blocks()));
         }
-        self.opcodes = Some(matching_blocks_to_opcodes(self.get_matching_blocks()));
-        self.opcodes.as_ref().unwrap().clone()
+        self.opcodes.as_ref().unwrap()
     }
 
     pub fn get_grouped_opcodes(&mut self, n: usize) -> Vec<Vec<Opcode>> {
         let mut res = Vec::new();
-        let mut codes = self.get_opcodes();
+        let mut codes = self.get_opcodes().to_vec();
         if codes.is_empty() {
             codes.push(Opcode::Equal(0, 1, 0, 1));
         }
@@ -495,7 +492,7 @@ fn test_sequence_matcher() {
     // Test with owned vectors
     let vec_a = vec![1, 2, 3, 4, 5];
     let vec_b = vec![1, 2, 7, 4, 5];
-    let mut s = SequenceMatcher::new(vec_a, vec_b);
+    let mut s = SequenceMatcher::new(&vec_a, &vec_b);
     assert_eq!(
         s.get_matching_blocks(),
         vec![(0, 0, 2), (3, 3, 2), (5, 5, 0)]
