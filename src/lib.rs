@@ -52,8 +52,8 @@ pub fn unique_lcs<A: Eq + Hash>(a: &[A], b: &[A]) -> Vec<(usize, usize)> {
     // Use the Patience Sorting algorithm to find the longest common subset
     // See http://en.wikipedia.org/wiki/Patience_sorting for more information
     let mut backpointers: Vec<Option<usize>> = vec![None; b.len()];
-    let mut stacks: Vec<usize> = Vec::new();
-    let mut lasts: Vec<usize> = Vec::new();
+    let mut stacks: Vec<usize> = Vec::with_capacity(b.len().min(64));
+    let mut lasts: Vec<usize> = Vec::with_capacity(b.len().min(64));
     let mut k: usize = 0;
 
     for (bpos, apos_opt) in btoa.iter().enumerate() {
@@ -90,9 +90,11 @@ pub fn unique_lcs<A: Eq + Hash>(a: &[A], b: &[A]) -> Vec<(usize, usize)> {
     }
 
     let mut result = Vec::new();
-    let mut m_opt = Some(*lasts.last().unwrap());
+    let mut m_opt = lasts.last().copied();
     while let Some(m) = m_opt {
-        result.push((btoa[m].unwrap(), m));
+        if let Some(apos) = btoa[m] {
+            result.push((apos, m));
+        }
         m_opt = backpointers[m];
     }
     result.reverse();
@@ -128,6 +130,7 @@ fn test_unique_lcs() {
 ///   answer: The return array. Will be filled with tuples indicating [(line_in_a, line_in_b)]
 ///   maxrecursion: The maximum depth to recurse.  Must be a positive integer.
 /// Returns: None, the return value is in the parameter answer, which should be a list
+#[allow(clippy::too_many_arguments)]
 pub fn recurse_matches<T: PartialEq + Hash + Eq>(
     a: &[T],
     b: &[T],
@@ -445,7 +448,7 @@ where
                         *b_start,
                         std::cmp::min(*b_end, *b_start + n),
                     ));
-                    res.push(group.clone());
+                    res.push(std::mem::take(&mut group));
                     group.clear();
                     first_start = std::cmp::max(first_start, (*a_end).saturating_sub(n));
                     second_start = std::cmp::max(second_start, (*b_end).saturating_sub(n));
@@ -453,8 +456,8 @@ where
             }
             group.push(code.dupe(first_start, code.a_end(), second_start, code.b_end()));
         }
-        if !(group.len() == 1 && matches!(group[0], Opcode::Equal { .. })) || group.is_empty() {
-            res.push(group.clone());
+        if group.is_empty() || group.len() != 1 || !matches!(group[0], Opcode::Equal { .. }) {
+            res.push(group);
         }
         res
     }
@@ -509,6 +512,7 @@ fn test_sequence_matcher() {
 use patchkit::unified::{Hunk, HunkLine, UnifiedPatch};
 
 #[cfg(feature = "patchkit")]
+#[allow(clippy::tabs_in_doc_comments)]
 /// Compare two sequences of lines; generate the delta as a unified diff.
 ///
 /// Unified diffs are a compact way of showing line changes and a few
@@ -575,34 +579,37 @@ pub fn unified_diff(
     for group in sm.get_grouped_opcodes(n) {
         let mut hunk = Hunk {
             orig_pos: group[0].a_start() + 1,
-            orig_range: group.last().unwrap().a_end() - group[0].a_start(),
+            orig_range: group.last().map(|op| op.a_end()).unwrap_or(0) - group[0].a_start(),
             mod_pos: group[0].b_start() + 1,
-            mod_range: group.last().unwrap().b_end() - group[0].b_start(),
+            mod_range: group.last().map(|op| op.b_end()).unwrap_or(0) - group[0].b_start(),
             lines: Vec::new(),
             tail: None,
         };
 
         for opcode in group {
             if let Opcode::Equal(a_start, a_end, ..) = opcode {
-                for line in a[a_start..a_end].iter() {
-                    hunk.lines
-                        .push(HunkLine::ContextLine(line.as_bytes().to_vec()));
-                }
+                hunk.lines.extend(
+                    a[a_start..a_end]
+                        .iter()
+                        .map(|line| HunkLine::ContextLine(line.as_bytes().to_vec())),
+                );
                 continue;
             }
 
             if matches!(opcode, Opcode::Replace(..) | Opcode::Delete(..)) {
-                for line in a[opcode.a_start()..opcode.a_end()].iter() {
-                    hunk.lines
-                        .push(HunkLine::RemoveLine(line.as_bytes().to_vec()));
-                }
+                hunk.lines.extend(
+                    a[opcode.a_start()..opcode.a_end()]
+                        .iter()
+                        .map(|line| HunkLine::RemoveLine(line.as_bytes().to_vec())),
+                );
             }
 
             if matches!(opcode, Opcode::Replace(..) | Opcode::Insert(..)) {
-                for line in b[opcode.b_start()..opcode.b_end()].iter() {
-                    hunk.lines
-                        .push(HunkLine::InsertLine(line.as_bytes().to_vec()));
-                }
+                hunk.lines.extend(
+                    b[opcode.b_start()..opcode.b_end()]
+                        .iter()
+                        .map(|line| HunkLine::InsertLine(line.as_bytes().to_vec())),
+                );
             }
         }
 
@@ -613,7 +620,7 @@ pub fn unified_diff(
         Vec::new()
     } else {
         String::from_utf8(patch.as_bytes())
-            .unwrap()
+            .unwrap_or_default()
             .split_inclusive('\n')
             .map(|x| x.to_string())
             .collect()
